@@ -636,7 +636,7 @@ class GenerationMixin(ContinuousMixin):
             and attention_mask is not None
             and attention_mask.ndim == 2
         ):
-            if model_inputs["inputs_embeds"] is not None:
+            if not self.config.is_encoder_decoder and model_inputs["inputs_embeds"] is not None:
                 batch_size, sequence_length, _ = model_inputs["inputs_embeds"].shape
             else:
                 batch_size, sequence_length = model_inputs[input_ids_key].shape[:2]
@@ -655,7 +655,6 @@ class GenerationMixin(ContinuousMixin):
 
             # If it's not defined, it means the model uses the new general mask API
             if causal_mask_creation_function is None:  # can't be found
-                output_attentions = kwargs.get("output_attentions", False)
                 token_type_ids = getattr(model_input, "token_type_ids", None)
                 # Some models may overwrite the general one
                 causal_mask_creation_function = getattr(self, "create_masks_for_generate", create_masks_for_generate)
@@ -666,7 +665,6 @@ class GenerationMixin(ContinuousMixin):
                     attention_mask=attention_mask,
                     cache_position=cache_position,
                     past_key_values=past_key_values,
-                    output_attentions=output_attentions,
                     token_type_ids=token_type_ids,
                 )
             else:
@@ -1978,6 +1976,7 @@ class GenerationMixin(ContinuousMixin):
             and "jamba" not in self.__class__.__name__.lower()
             and "zamba" not in self.__class__.__name__.lower()
             and "bamba" not in self.__class__.__name__.lower()
+            and "minimax" not in self.__class__.__name__.lower()
         )
 
     def _prepare_cache_for_generation(
@@ -2344,12 +2343,18 @@ class GenerationMixin(ContinuousMixin):
                     - [`~generation.GenerateBeamEncoderDecoderOutput`]
         """
         # 0. If requested, load an arbitrary generation recipe from the Hub and run it instead
+        trust_remote_code = kwargs.pop("trust_remote_code", None)
         if custom_generate is not None:
-            trust_remote_code = kwargs.pop("trust_remote_code", None)
             # Get all `generate` arguments in a single variable. Custom functions are responsible for handling them:
-            # they receive the same inputs as `generate`, only with `model` instead of `self`. They can access to
-            # methods from `GenerationMixin` through `model`.
-            global_keys_to_exclude = {"self", "kwargs"}
+            # they receive the same inputs as `generate`, with `model` instead of `self` and excluding the arguments to
+            # trigger the custom generation. They can access to methods from `GenerationMixin` through `model`.
+            global_keys_to_exclude = {
+                "self",
+                "kwargs",
+                "global_keys_to_exclude",
+                "trust_remote_code",
+                "custom_generate",
+            }
             generate_arguments = {key: value for key, value in locals().items() if key not in global_keys_to_exclude}
             generate_arguments.update(kwargs)
 
@@ -2560,6 +2565,11 @@ class GenerationMixin(ContinuousMixin):
                 **model_kwargs,
             )
         elif generation_mode == GenerationMode.DOLA_GENERATION:
+            if not trust_remote_code:
+                logger.warning_once(
+                    "DoLa Decoding is scheduled to be moved to a `custom_generate` repository in v4.55.0. "
+                    "To prevent loss of backward compatibility, add `trust_remote_code=True` to your `generate` call."
+                )
             if self._is_stateful:
                 # DoLa decoding was not designed for stateful models, and would require some changes
                 raise ValueError(
@@ -2577,6 +2587,11 @@ class GenerationMixin(ContinuousMixin):
             )
 
         elif generation_mode == GenerationMode.CONTRASTIVE_SEARCH:
+            if not trust_remote_code:
+                logger.warning_once(
+                    "Contrastive Search is scheduled to be moved to a `custom_generate` repository in v4.55.0. "
+                    "To prevent loss of backward compatibility, add `trust_remote_code=True` to your `generate` call."
+                )
             if not model_kwargs["use_cache"]:
                 raise ValueError("Contrastive search requires `use_cache=True`")
             if self._is_stateful:
@@ -2634,6 +2649,10 @@ class GenerationMixin(ContinuousMixin):
             )
 
         elif generation_mode == GenerationMode.GROUP_BEAM_SEARCH:
+            logger.warning_once(
+                "Group Beam Search is scheduled to be moved to a `custom_generate` repository in v4.55.0. "
+                "To prevent loss of backward compatibility, add `trust_remote_code=True` to your `generate` call."
+            )
             # 11. prepare beam search scorer
             beam_scorer = BeamSearchScorer(
                 batch_size=batch_size,
@@ -2664,6 +2683,10 @@ class GenerationMixin(ContinuousMixin):
             )
 
         elif generation_mode == GenerationMode.CONSTRAINED_BEAM_SEARCH:
+            logger.warning_once(
+                "Constrained Beam Search is scheduled to be moved to a `custom_generate` repository in v4.55.0. "
+                "To prevent loss of backward compatibility, add `trust_remote_code=True` to your `generate` call."
+            )
             final_constraints = []
             if generation_config.constraints is not None:
                 final_constraints = generation_config.constraints
